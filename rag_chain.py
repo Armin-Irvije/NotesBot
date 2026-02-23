@@ -3,37 +3,82 @@ RAG Chain Implementation using FAISS Vector Store and Ollama (Free & Open Source
 No paid APIs required - everything runs locally!
 """
 
-from langchain_community.embeddings import OllamaEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_ollama import OllamaLLM
-from langchain_classic.chains import RetrievalQA
+from typing import Any, Dict, List, Optional
+
+from langchain_community.embeddings import OllamaEmbeddings  # pyright: ignore[reportMissingImports]
+from langchain_community.vectorstores import FAISS  # pyright: ignore[reportMissingImports]
+from langchain_ollama import OllamaLLM  # pyright: ignore[reportMissingImports]
+from langchain_classic.chains import RetrievalQA  # pyright: ignore[reportMissingImports]
 from langchain_core.prompts import PromptTemplate
 from langchain_core.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
+from langchain_core.documents import Document
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.vectorstores import VectorStore
+
+
+class SimilaritySearchWithScoreRetriever(BaseRetriever):
+    """
+    Retriever that uses the vector store's similarity_search_with_score(query, k, filter, **kwargs).
+    Optionally filters out documents below a score threshold and attaches score to metadata.
+
+    Direct usage of similarity_search_with_score (without this retriever):
+        results = vector_store.similarity_search_with_score(
+            query="What is RAG?",
+            k=4,
+            filter={"source": "mynotes/foo.pdf"},  # optional
+        )
+        # results: list of (Document, float) tuples; FAISS returns L2 distance (lower = more similar)
+    """
+
+    vector_store: VectorStore
+    k: int = 4
+    metadata_filter: Optional[Dict[str, Any]] = None
+    score_threshold: Optional[float] = None
+    """If set, only return docs with score >= this (for similarity) or <= this (for distance). FAISS uses L2 distance (lower = better)."""
+
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        # similarity_search_with_score(query, k=4, filter=None, **kwargs)
+        results = self.vector_store.similarity_search_with_score(query=query, k=self.k, filter=self.metadata_filter)
+        docs: List[Document] = []
+        for doc, score in results:
+            if self.score_threshold is not None:
+                # FAISS returns L2 distance: lower is more similar. So we keep docs with distance <= threshold.
+                if score > self.score_threshold:
+                    continue
+            doc.metadata["retrieval_score"] = score
+            docs.append(doc)
+        return docs
 
 
 class LocalRAGChain:
     """RAG Chain using local Ollama models - completely free and open source"""
-    
+    # Default values
     def __init__(
         self,
         vector_store_path: str = "./vector_store",
         model_name: str = "llama3",
-        temperature: float = 0.7,
-        top_k: int = 3
+        temperature: float = 0.4,
+        top_k: int = 3,
+        score_threshold: Optional[float] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the RAG chain with local models
-        
+
         Args:
             vector_store_path: Path to the FAISS vector store
             model_name: Ollama model to use (llama3, mistral, phi3, etc.)
             temperature: Creativity level (0.0 = focused, 1.0 = creative)
-            top_k: Number of relevant chunks to retrieve
+            top_k: Number of relevant chunks to retrieve (passed as k to similarity_search_with_score)
+            score_threshold: Optional max L2 distance for FAISS (lower = more similar); docs with score > this are excluded
+            metadata_filter: Optional metadata filter for similarity_search_with_score (e.g. {"source": "mynotes/foo.pdf"})
         """
         self.vector_store_path = vector_store_path
         self.model_name = model_name
         self.temperature = temperature
         self.top_k = top_k
+        self.score_threshold = score_threshold
+        self.metadata_filter = metadata_filter
         
         print(f"Initializing Local RAG Chain...")
         print(f"Model: {model_name} (via Ollama)")
@@ -89,7 +134,8 @@ Context from notes:
 Question: {question}
 
 Instructions:
-- Answer the question using the information from the context above and synthesis a clear and concise answer
+- Answer the question using the information from the context above 
+- Answer should be synthesized from the context above into coherent explanation
 - If the context doesn't contain enough information to answer, say "I don't have enough information in the notes to answer that question."
 - Be concise but thorough
 - If relevant, mention which topic or subject the information comes from
@@ -102,15 +148,19 @@ Answer:"""
             input_variables=["context", "question"]
         )
         
-        # Create retrieval chain
+        # Retriever that uses similarity_search_with_score(query, k, filter, **kwargs)
+        retriever = SimilaritySearchWithScoreRetriever(
+            vector_store=self.vector_store,
+            k=self.top_k,
+            metadata_filter=self.metadata_filter,
+            score_threshold=self.score_threshold,
+        )
         qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
             chain_type="stuff",
-            retriever=self.vector_store.as_retriever(
-                search_kwargs={"k": self.top_k}
-            ),
+            retriever=retriever,
             return_source_documents=True,
-            chain_type_kwargs={"prompt": PROMPT}
+            chain_type_kwargs={"prompt": PROMPT},
         )
         
         return qa_chain
@@ -128,7 +178,7 @@ Answer:"""
         """
         print(f"\nQuestion: {question}")
         print("-" * 60)
-        print("Answer: ", end="", flush=True)
+        print("Answer: Thinking...", end="", flush=True)
         
         # Get answer (will stream to console)
         response = self.qa_chain.invoke({"query": question})
@@ -140,9 +190,11 @@ Answer:"""
             print(f"\n📚 Sources ({len(response['source_documents'])} relevant chunks):")
             for i, doc in enumerate(response["source_documents"], 1):
                 source = doc.metadata.get("source", "unknown")
-                print(f"\n  [{i}] {source}")
+                score = doc.metadata.get("retrieval_score")
+                score_str = f" (score={score:.4f})" if score is not None else ""
+                print(f"\n  [{i}] {source}{score_str}")
                 print(f"      {doc.page_content[:150]}...")
-        
+                print(response["result"])      
         return response
     
     def interactive_mode(self):
@@ -173,12 +225,7 @@ Answer:"""
 
 
 # Alternative: Simple function-based approach
-def ask_question(
-    question: str,
-    vector_store_path: str = "./vector_store",
-    model: str = "llama3",
-    show_sources: bool = True
-):
+def ask_question(question: str, vector_store_path: str = "./vector_store", model: str = "llama3", show_sources: bool = True):
     """
     Simple function to ask a single question
     
@@ -209,8 +256,8 @@ if __name__ == "__main__":
         rag_chain = LocalRAGChain(
             vector_store_path="./vector_store",
             model_name="llama3",  # Change to: mistral, phi3, gemma, etc.
-            temperature=0.7,
-            top_k=3
+            temperature=0.4,
+            top_k=5
         )
         
         # Start interactive mode

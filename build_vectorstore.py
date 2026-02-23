@@ -16,15 +16,10 @@ from document_loader import NotesLoader
 class VectorStoreBuilder:
     """Build and manage FAISS vector store from documents"""
     
-    def __init__(
-        self,
-        chunk_size: int = 1000, # characters not words
-        chunk_overlap: int = 200, # over lap means some chunks have the same text
-        embedding_model: str = "llama3"
-    ):
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200, embedding_model: str = "llama3"):  # chunk_size in chars; overlap = shared text between chunks
         """
         Initialize the vector store builder
-        
+
         Args:
             chunk_size: Maximum size of each text chunk
             chunk_overlap: Number of characters to overlap between chunks
@@ -61,12 +56,12 @@ class VectorStoreBuilder:
         print(f"Chunk size: {self.chunk_size}, Overlap: {self.chunk_overlap}")
         
         chunks = self.text_splitter.split_documents(documents)
-        
+        for i, chunk in enumerate(chunks):
+            chunk.metadata["chunk_index"] = i
         print(f"✓ Created {len(chunks)} chunks from {len(documents)} documents")
         print(f"  Average chunks per document: {len(chunks) / len(documents):.1f}")
-        
         return chunks
-    
+
     def create_vector_store(self, chunks: List[Document]) -> FAISS:
         """
         Create FAISS vector store from document chunks
@@ -91,11 +86,7 @@ class VectorStoreBuilder:
         
         return vector_store
     
-    def save_vector_store(
-        self,
-        vector_store: FAISS,
-        save_path: str = "./vector_store"
-    ):
+    def save_vector_store(self, vector_store: FAISS, save_path: str = "./vector_store"):
         """
         Save vector store to disk for reuse
         
@@ -114,10 +105,7 @@ class VectorStoreBuilder:
         print(f"✓ Vector store saved successfully!")
         print(f"  Location: {os.path.abspath(save_path)}")
     
-    def load_vector_store(
-        self,
-        load_path: str = "./vector_store"
-    ) -> FAISS:
+    def load_vector_store(self, load_path: str = "./vector_store") -> FAISS:
         """
         Load existing vector store from disk
         
@@ -143,12 +131,7 @@ class VectorStoreBuilder:
         
         return vector_store
     
-    def test_similarity_search(
-        self,
-        vector_store: FAISS,
-        query: str,
-        k: int = 3
-    ):
+    def test_similarity_search(self, vector_store: FAISS, query: str, k: int = 3):
         """
         Test the vector store with a sample query
         
@@ -172,13 +155,7 @@ class VectorStoreBuilder:
             print()
 
 
-def build_vector_database(
-    notes_directory: str = "./mynotes",
-    vector_store_path: str = "./vector_store",
-    chunk_size: int = 1000,
-    chunk_overlap: int = 200,
-    test_query: str = "What is RAG?"
-):
+def build_vector_database(notes_directory: str = "./mynotes", vector_store_path: str = "./vector_store", chunk_size: int = 1000, chunk_overlap: int = 200, test_query: str = "What is RAG?"):
     """
     Main function to build the complete vector database
     
@@ -239,7 +216,7 @@ if __name__ == "__main__":
     build_vector_database(
         notes_directory="./mynotes",
         vector_store_path="./vector_store",
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=1200,
+        chunk_overlap=250,
         test_query="What is RAG evaluation?"
     )
