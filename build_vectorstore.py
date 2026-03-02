@@ -2,11 +2,12 @@
 Chunking and Embedding Script for LangChain RAG Chatbot
 Splits documents, generates embeddings, and stores in FAISS vector database
 """
-
+# the imports often tell you what is used and needed
 import os
 import pickle
+from pathlib import Path
 from typing import List
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
@@ -16,50 +17,91 @@ from document_loader import NotesLoader
 class VectorStoreBuilder:
     """Build and manage FAISS vector store from documents"""
     
-    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200, embedding_model: str = "llama3"):  # chunk_size in chars; overlap = shared text between chunks
+    def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200, embedding_model: str = "nomic-embed-text"):
         """
         Initialize the vector store builder
 
         Args:
-            chunk_size: Maximum size of each text chunk
+            chunk_size: Maximum size of each text chunk (in characters)
             chunk_overlap: Number of characters to overlap between chunks
-            embedding_model: Ollama model to use for embeddings
+            embedding_model: Ollama embedding model (use a dedicated embedding model like nomic-embed-text, not a generative LLM)
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.embedding_model = embedding_model
-        
-        # Initialize text splitter
+
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
             length_function=len,
             separators=["\n\n", "\n", " ", ""]
         )
-        
-        # Initialize embeddings
+
+        self.md_header_splitter = MarkdownHeaderTextSplitter(
+            headers_to_split_on=[
+                ("#", "section"),
+                ("##", "subsection"),
+                ("###", "subsubsection"),
+            ],
+            strip_headers=False,
+        )
+
         print(f"Initializing Ollama embeddings with model: {self.embedding_model}")
-        self.embeddings = OllamaEmbeddings(model=self.embedding_model) # langchain community package for ollama embeddings
-        # Juris legal uses Open AI propria-3-embed model 
+        self.embeddings = OllamaEmbeddings(model=self.embedding_model)
         
+    def _is_markdown(self, doc: Document) -> bool:
+        """Check if a document is a markdown file based on its source path."""
+        source = doc.metadata.get("source", "")
+        return source.lower().endswith((".md", ".markdown"))
+
+    def _split_markdown_documents(self, documents: List[Document]) -> List[Document]:
+        """Split markdown documents using header-aware splitting, then size-limit long sections."""
+        all_chunks: List[Document] = []
+        for doc in documents:
+            header_splits = self.md_header_splitter.split_text(doc.page_content)
+            sub_chunks = self.text_splitter.split_documents(header_splits)
+            for chunk in sub_chunks:
+                merged_meta = {**doc.metadata, **chunk.metadata}
+                chunk.metadata = merged_meta
+            all_chunks.extend(sub_chunks)
+        return all_chunks
+
     def split_documents(self, documents: List[Document]) -> List[Document]:
         """
-        Split documents into chunks
-        
+        Split documents into chunks. Uses header-aware splitting for markdown files
+        and recursive character splitting for other document types.
+
         Args:
             documents: List of documents to split
-            
+
         Returns:
-            List of document chunks
+            List of document chunks with enriched metadata
         """
         print(f"\nSplitting {len(documents)} documents into chunks...")
         print(f"Chunk size: {self.chunk_size}, Overlap: {self.chunk_overlap}")
-        
-        chunks = self.text_splitter.split_documents(documents)
+
+        md_docs = [d for d in documents if self._is_markdown(d)]
+        other_docs = [d for d in documents if not self._is_markdown(d)]
+
+        chunks: List[Document] = []
+
+        if md_docs:
+            print(f"  Splitting {len(md_docs)} markdown document(s) with header-aware splitter...")
+            chunks.extend(self._split_markdown_documents(md_docs))
+
+        if other_docs:
+            print(f"  Splitting {len(other_docs)} non-markdown document(s) with recursive splitter...")
+            chunks.extend(self.text_splitter.split_documents(other_docs))
+
         for i, chunk in enumerate(chunks):
             chunk.metadata["chunk_index"] = i
+            if "doc_title" not in chunk.metadata:
+                source = chunk.metadata.get("source", "")
+                chunk.metadata["doc_title"] = Path(source).stem if source else "unknown"
+
         print(f"✓ Created {len(chunks)} chunks from {len(documents)} documents")
-        print(f"  Average chunks per document: {len(chunks) / len(documents):.1f}")
+        if documents:
+            print(f"  Average chunks per document: {len(chunks) / len(documents):.1f}")
         return chunks
 
     def create_vector_store(self, chunks: List[Document]) -> FAISS:
@@ -155,15 +197,16 @@ class VectorStoreBuilder:
             print()
 
 
-def build_vector_database(notes_directory: str = "./mynotes", vector_store_path: str = "./vector_store", chunk_size: int = 1000, chunk_overlap: int = 200, test_query: str = "What is RAG?"):
+def build_vector_database(notes_directory: str = "./mynotes", vector_store_path: str = "./vector_store", chunk_size: int = 1000, chunk_overlap: int = 200, embedding_model: str = "nomic-embed-text", test_query: str = "What is RAG?"):
     """
     Main function to build the complete vector database
-    
+
     Args:
         notes_directory: Path to notes folder
         vector_store_path: Path to save vector store
         chunk_size: Size of text chunks
         chunk_overlap: Overlap between chunks
+        embedding_model: Ollama embedding model (use a dedicated embedding model like nomic-embed-text)
         test_query: Query to test the vector store
     """
     print("="*60)
@@ -184,7 +227,7 @@ def build_vector_database(notes_directory: str = "./mynotes", vector_store_path:
     builder = VectorStoreBuilder(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
-        embedding_model="llama3"
+        embedding_model=embedding_model
     )
     
     # Step 3: Split into chunks
@@ -218,5 +261,6 @@ if __name__ == "__main__":
         vector_store_path="./vector_store",
         chunk_size=1200,
         chunk_overlap=250,
+        embedding_model="nomic-embed-text",
         test_query="What is RAG evaluation?"
     )
