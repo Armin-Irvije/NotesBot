@@ -2,9 +2,19 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
+
+# Make project root importable so we can use the real NotesBot RAG chain
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+import sys
+
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from rag_chain import LocalRAGChain # imports rag chain created with MMR, multi query retrieval, re ranker, hybrid retrieval, semantic similarity, ect 
 
 DOCUMENTS = [
     "Ragas are melodic frameworks in Indian classical music.",
@@ -453,6 +463,40 @@ def default_rag_client(llm_client, logdir: str = "logs") -> ExampleRAG:
     client = ExampleRAG(llm_client=llm_client, retriever=retriever, logdir=logdir)
     client.add_documents(DOCUMENTS)  # Add default documents
     return client
+
+
+def create_notesbot_client(**kwargs) -> LocalRAGChain:
+    """
+    Create a NotesBot RAG client backed by the real FAISS vector store.
+
+    This uses LocalRAGChain from the main project instead of the toy ExampleRAG
+    defined in this file.
+    """
+    return LocalRAGChain(
+        vector_store_path=str(PROJECT_ROOT / "vector_store"),
+        model_name="llama3",
+        embedding_model="nomic-embed-text",
+        **kwargs,
+    )
+
+
+def query_notesbot_with_contexts(chain: LocalRAGChain, question: str) -> Dict[str, Any]:
+    """
+    Run a query against NotesBot and return the answer plus retrieved contexts.
+
+    Returns a dict with:
+      - answer: generated answer string
+      - retrieved_contexts: list[str] of chunk contents
+    """
+    result = chain.query(question, show_sources=False)
+    # LocalRAGChain.query returns {"result": answer, "source_documents": [...]}
+    answer = result.get("result", "") or result.get("answer", "")
+    source_docs = result.get("source_documents") or []
+    retrieved_contexts = [doc.page_content for doc in source_docs]
+    return {
+        "answer": answer,
+        "retrieved_contexts": retrieved_contexts,
+    }
 
 
 if __name__ == "__main__":

@@ -340,10 +340,10 @@ Answer:"""
             # this corresponds to the {context} and {question} variables in the prompt template
             input_variables=["context", "question"]
         )
-        
+        # retrieve k documents or amount set by reranker model
         retrieve_k = self.top_k * 3 if self.use_reranker else self.top_k
 
-        if self.use_mmr:
+        if self.use_mmr: # mmr is prioritzied when both hybridkeyword retriever and mmr retriever are set to true as BASE retriever
             base_retriever = MMRRetriever(
                 vector_store=self.vector_store,
                 k=retrieve_k,
@@ -367,15 +367,15 @@ Answer:"""
                 score_threshold=self.score_threshold,
             )
 
+        
         retriever = base_retriever
+        # wrapping order after base retriever is set
         if self.use_multi_query:
-            retriever = MultiQueryEnhancedRetriever(
-                base_retriever=retriever, llm=self.llm, num_queries=3,
-            )
+            # ask LLM to generate 2 alternate queries (3 including the first)
+            # runs retrieval for each query
+            retriever = MultiQueryEnhancedRetriever(base_retriever=retriever, llm=self.llm, num_queries=3,)
         if self.use_reranker and self.reranker_model is not None:
-            retriever = ReRankRetriever(
-                base_retriever=retriever, reranker=self.reranker_model, top_n=self.top_k,
-            )
+            retriever = ReRankRetriever(base_retriever=retriever, reranker=self.reranker_model, top_n=self.top_k,)
 
         qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
@@ -483,7 +483,12 @@ if __name__ == "__main__":
             model_name="llama3",
             embedding_model="nomic-embed-text",
             temperature=0.4,
-            top_k=5,
+            top_k=3,
+            use_hybrid_keyword=False, # is overwritten when mmr is true
+            use_multi_query=True,
+            use_reranker=True,
+            use_mmr=True,
+            mmr_lambda=0.5,
         )
         
         # Start interactive mode
