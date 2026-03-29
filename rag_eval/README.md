@@ -53,8 +53,7 @@ python evals.py
 rag_eval/
 ├── README.md           # This file
 ├── pyproject.toml      # Project configuration
-├── rag.py              # Your RAG application code
-├── evals.py            # Evaluation workflow
+├── evals.py            # Evaluation workflow (imports ../rag_chain.py)
 ├── __init__.py         # Makes this a Python package
 └── evals/              # Evaluation-related data
     ├── datasets/       # Test datasets

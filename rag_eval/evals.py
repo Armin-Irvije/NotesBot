@@ -1,6 +1,6 @@
-import os
 import sys
 from pathlib import Path
+from typing import Any, Dict
 
 from openai import OpenAI
 
@@ -9,9 +9,29 @@ from ragas.embeddings.base import embedding_factory
 from ragas.llms import llm_factory
 from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
-# Add the current directory to the path so we can import rag module when run as a script
-sys.path.insert(0, str(Path(__file__).parent))
-from rag import create_notesbot_client, query_notesbot_with_contexts
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from rag_chain import LocalRAGChain
+
+
+def create_notesbot_client(**kwargs) -> LocalRAGChain:
+    return LocalRAGChain(
+        vector_store_path=str(PROJECT_ROOT / "vector_store"),
+        model_name="llama3",
+        embedding_model="nomic-embed-text",
+        **kwargs,
+    )
+
+
+def query_notesbot_with_contexts(chain: LocalRAGChain, question: str) -> Dict[str, Any]:
+    result = chain.query(question, show_sources=False)
+    answer = result.get("result", "") or result.get("answer", "")
+    source_docs = result.get("source_documents") or []
+    retrieved_contexts = [doc.page_content for doc in source_docs]
+    return {"answer": answer, "retrieved_contexts": retrieved_contexts}
+
 
 # Create an OpenAI-compatible client for Ollama (used by RAGAS evaluators, not NotesBot itself)
 client = OpenAI(

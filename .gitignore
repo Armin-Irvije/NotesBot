@@ -1,6 +1,9 @@
 myenv/
 /vector_store
-/__pycache__
+__pycache__/
+
 rag_eval/evals/logs
 rag_eval/evals/datasets
 rag_eval/evals/experiments
+
+misellaneous/
